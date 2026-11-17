@@ -14,7 +14,7 @@ A Cloudflare Worker that watches Playtomic for free padel slots at **Padel Embas
 
 ## Deploying
 
-The Worker is connected to this repo with Cloudflare Workers Builds: every push to `main` deploys automatically, using `wrangler.toml` (bindings and the every-minute cron). Secrets stay in the Cloudflare dashboard.
+The Worker is connected to this repo (since 17 Nov 2026) with Cloudflare Workers Builds: every push to `main` deploys automatically, using `wrangler.toml` (bindings and the every-minute cron). Secrets stay in the Cloudflare dashboard.
 
 ## Setup from scratch (Cloudflare dashboard)
 
