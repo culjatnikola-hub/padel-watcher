@@ -4,7 +4,7 @@ A Cloudflare Worker that watches Playtomic for free padel slots at **Padel Embas
 
 ## What it does
 
-- **Checks every minute** (Cron Trigger) for slots in each person's days, start-time window and length.
+- **Checks every minute** from 07:00 to 22:59 Zagreb winter time (Cron Trigger) for slots in each person's days, start-time window and length.
 - **Alerts on cancellations**, with a hint of how fast that kind of slot usually goes (🔥 / ⏳ / 🧊, learned from history).
 - **New releases** (when the booking window reaches a slot): alerts Mon–Thu; on Fridays only the 18:00 start.
 - **Skips** slots for today, and won't repeat an alert for the same slot within 3 hours (checkout flicker).
@@ -26,7 +26,7 @@ The Worker is connected to this repo with Cloudflare Workers Builds: every push 
    - `TELEGRAM_TOKEN` (secret): from @BotFather
    - `TELEGRAM_CHAT_ID` (variable): the owner's Telegram chat ID
    - `PLAYTOMIC_TOKEN` (secret, optional): enables `/bookings`
-4. **Trigger**: Cron `* * * * *` (every minute)
+4. **Trigger**: Cron `* 6-21 * * *` (every minute, 06:00–21:59 UTC)
 5. Open `https://<your-worker>.workers.dev/?setup=1` once to connect the Telegram webhook and command menus.
 
 Never commit tokens: they live only in Cloudflare secrets.

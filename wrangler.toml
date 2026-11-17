@@ -2,14 +2,14 @@
 # Secrets (TELEGRAM_TOKEN, PLAYTOMIC_TOKEN) stay in the Cloudflare dashboard, never in this file.
 name = "padel-watcher"
 main = "src/worker.js"
-compatibility_date = "2025-11-01"
+compatibility_date = "2026-11-01"
 workers_dev = true
 
 # Keep variables set in the dashboard (TELEGRAM_CHAT_ID) when deploying.
 keep_vars = true
 
 [triggers]
-crons = ["* * * * *"]
+crons = ["* 6-21 * * *"]          # every minute, 06:00-21:59 UTC (no night checks)
 
 [[kv_namespaces]]
 binding = "SEEN"
