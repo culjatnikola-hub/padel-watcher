@@ -12,7 +12,11 @@ A Cloudflare Worker that watches Playtomic for free padel slots at **Padel Embas
 - **History and stats** in D1: `/report` (charts), `/stats`, `/metrics`, plus a weekly report on Monday 08:00.
 - **Optional:** reads the owner's Playtomic bookings (`/bookings`), skips days already booked, reminds the day before.
 
-## Setup (Cloudflare dashboard)
+## Deploying
+
+The Worker is connected to this repo with Cloudflare Workers Builds: every push to `main` deploys automatically, using `wrangler.toml` (bindings and the every-minute cron). Secrets stay in the Cloudflare dashboard.
+
+## Setup from scratch (Cloudflare dashboard)
 
 1. Create a Worker and paste `src/worker.js` into it.
 2. **Bindings**

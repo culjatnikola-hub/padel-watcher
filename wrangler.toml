@@ -1,0 +1,21 @@
+# Used by Cloudflare Workers Builds (deploy on every push to main) and by `wrangler deploy`.
+# Secrets (TELEGRAM_TOKEN, PLAYTOMIC_TOKEN) stay in the Cloudflare dashboard, never in this file.
+name = "padel-watcher"
+main = "src/worker.js"
+compatibility_date = "2025-11-01"
+workers_dev = true
+
+# Keep variables set in the dashboard (TELEGRAM_CHAT_ID) when deploying.
+keep_vars = true
+
+[triggers]
+crons = ["* * * * *"]
+
+[[kv_namespaces]]
+binding = "SEEN"
+id = "13a2a0ca5acb44e6be0ef5ec6b60cb70"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "padel-history"
+database_id = "3e675ccd-dd30-4f1f-9dfb-99194f2e1aa4"
