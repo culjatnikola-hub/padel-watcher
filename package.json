@@ -4,7 +4,9 @@
   "type": "module",
   "description": "Cloudflare Worker that watches Playtomic for free padel slots and alerts on Telegram",
   "scripts": {
-    "test": "node test/multi-user.mjs && node test/windows.mjs && node test/flicker.mjs && node test/releases.mjs"
+    "test": "node test/multi-user.mjs && node test/windows.mjs && node test/flicker.mjs && node test/releases.mjs && node test/backoff.mjs"
   },
-  "engines": { "node": ">=22.5" }
+  "engines": {
+    "node": ">=22.5"
+  }
 }

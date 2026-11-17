@@ -322,9 +322,11 @@ async function webhookStatus(env, origin) {
 }
 
 // ---------- Playtomic ----------
-// Playtomic occasionally refuses a request for a moment (a lone 403 about
-// once an hour), so a refused or failed request is retried once after 1.5 s.
-const RETRY_STATUSES = [403, 429, 500, 502, 503, 504];
+// Server errors (5xx) are retried once after 1.5 s. Refusals (403/429) are not:
+// retrying them only doubles the traffic while Playtomic is saying no. The
+// source state below backs off instead.
+const RETRY_STATUSES = [500, 502, 503, 504];
+const REFUSED_STATUSES = [403, 429];
 
 async function availability(club, day) {
   const url = `https://playtomic.com/api/clubs/availability?tenant_id=${club.tenant}` +
@@ -335,7 +337,14 @@ async function availability(club, day) {
     if (r.ok || !RETRY_STATUSES.includes(r.status) || attempt === 2) break;
     await new Promise(res => setTimeout(res, 1500));
   }
-  if (!r.ok) throw new Error(`Playtomic returned ${r.status}`);
+  if (!r.ok) {
+    const err = new Error(`Playtomic returned ${r.status}`);
+    err.status = r.status;
+    err.refused = REFUSED_STATUSES.includes(r.status);
+    const ra = Number(r.headers.get("Retry-After"));
+    if (ra > 0) err.retryAfterMs = ra * 1000;
+    throw err;
+  }
   const data = await r.json();
   if (!Array.isArray(data)) throw new Error("Playtomic sent data in an unexpected format");
   return data;
@@ -770,6 +779,34 @@ async function debugBookings(env) {
 }
 
 // ---------- the regular check ----------
+// ---------- data source health: back off when Playtomic refuses us ----------
+// ok:       normal checks every minute.
+// blocked:  Playtomic answered 403/429. No full checks; after each pause one
+//           single test request decides whether to resume. Pauses grow
+//           1 -> 5 -> 15 min (+-20% random), then every 15 min; reset on the first
+//           success. Capped at 15 min so a lifted block costs at most ~15 min of alerts.
+// You get one message once a block has lasted BLOCK_NOTIFY_MIN, and one when
+// it ends (only if you were told it started).
+const BACKOFF_MIN = [1, 5, 15];
+const BLOCK_NOTIFY_MIN = 10;
+const SOURCE_DEFAULT = { state: "ok", level: 0, since: null, nextTry: 0, lastError: null, notified: false };
+async function getSource(env) { return { ...SOURCE_DEFAULT, ...(await getJSON(env, "source", {})) }; }
+const jitter = ms => Math.round(ms * (0.8 + Math.random() * 0.4));
+
+function sourceBlocked(src, err, nowMs) {
+  const level = src.state === "blocked" ? Math.min(src.level + 1, BACKOFF_MIN.length - 1) : 0;
+  const wait = Math.max(jitter(BACKOFF_MIN[level] * 60000), err.retryAfterMs || 0);
+  return { ...src, state: "blocked", level, since: src.state === "blocked" ? src.since : nowMs,
+           nextTry: nowMs + wait, lastError: err.message };
+}
+
+function describeSource(src) {
+  if (src.state !== "blocked") return "✅ answering";
+  const next = local(new Date(src.nextTry)).time;
+  return `⛔ refusing the bot since ${local(new Date(src.since)).label} ${local(new Date(src.since)).time} ` +
+         `(${src.lastError}); paused, next test at ${next}`;
+}
+
 // A slot that became bookable in the last 30 min (the club's booking window
 // just reached it) is a new release, not a cancellation. Releases on workdays
 // are rare (people book those by phone weeks ahead), so they alert right away,
@@ -814,14 +851,58 @@ async function check(env, { force = false } = {}) {
   }
   const scanWith = combinedSettings(people.map(p => p.s));
 
+  // Is Playtomic answering? While it refuses us, skip the checks until the
+  // pause is over, then send one single test request before a full check.
+  let src = await getSource(env);
+  const wasBlocked = src.state === "blocked";
+  let skip = false;
+  if (wasBlocked && nowMs < src.nextTry) {
+    skip = true;
+  } else if (wasBlocked) {
+    try {
+      const testClub = Object.values(CLUBS)[0];
+      await availability(testClub, upcomingDays(scanWith.weekdays, testClub.window)[0]?.date || local(new Date(nowMs)).date);
+    } catch (e) {
+      if (e.refused) { src = sourceBlocked(src, e, nowMs); skip = true; }
+    }
+  }
+  if (skip) errors.push(`Paused: Playtomic is refusing requests (${src.lastError}); next test at ${local(new Date(src.nextTry)).time}`);
+
   // One scan per club, shared by everybody.
   for (const [id, club] of Object.entries(CLUBS)) {
+    if (skip) break;
     try {
       scans[id] = await scanClub(club, scanWith, nowMs);
     } catch (e) {
       errors.push(`${club.name}: ${e.message}`);
       result[club.name] = { error: e.message };
+      if (e.refused) {
+        src = sourceBlocked(src, e, nowMs);
+        skip = true;
+        break;                                     // don't ask for the next club either
+      }
     }
+  }
+  if (!skip && Object.keys(scans).length) {
+    if (wasBlocked && src.notified) {
+      await send(env, `✅ Playtomic is answering the bot again (it refused requests for ${fmtDuration(nowMs - src.since)}). ` +
+        "Back to checks every minute.");
+    }
+    src = { ...SOURCE_DEFAULT };
+  }
+  // Tell the owner once, when a block has lasted long enough to matter.
+  if (src.state === "blocked" && !src.notified && nowMs - src.since >= BLOCK_NOTIFY_MIN * 60000) {
+    await send(env, `⛔ Playtomic has been refusing the bot for ${fmtDuration(nowMs - src.since)} (${src.lastError}).\n\n` +
+      `I've stopped sending requests and will test again with a single request after growing pauses ` +
+      `(${BACKOFF_MIN.join(" → ")} min). Next test at ${local(new Date(src.nextTry)).time}. ` +
+      "I'll tell you as soon as it answers again. /report, /stats and your settings keep working.");
+    src = { ...src, notified: true };
+  }
+  // Only write when something changed (KV writes are limited on the free plan).
+  const before = await getJSON(env, "source", null);
+  if (JSON.stringify(before || SOURCE_DEFAULT) !== JSON.stringify(src)) {
+    if (src.state === "ok") await env.SEEN.delete("source");
+    else await putJSON(env, "source", src);
   }
 
   for (const person of people) {
@@ -896,7 +977,13 @@ async function check(env, { force = false } = {}) {
     else (result.others = result.others || {})[person.name] = ps.paused ? { paused: true } : out;
   }
 
-  await handleHealth(env, errors);
+  if (src.state === "blocked") {
+    // The block has its own messages; reset the generic error alert silently.
+    const health = await getJSON(env, "health", null);
+    if (health && health.failing) await putJSON(env, "health", { failing: false, alerted: false, lastAlert: 0, since: null });
+  } else {
+    await handleHealth(env, errors);
+  }
 
   if (!force) {
     try { await weeklyReport(env, s); } catch (e) { console.log("Weekly report failed:", e.message); }
@@ -1015,11 +1102,15 @@ async function ensureSchema(db) {
 //   outcome: taken | unbooked (start time passed while still free) | unwatched
 const RELEASE_TOLERANCE_MS = 10 * 60000;
 
+// After a gap in good data (e.g. a block), slots that disappeared were taken at
+// an unknown time: logged as "unwatched" so they don't distort the speed stats.
+const MONITOR_GAP_MS = 5 * 60000;
 async function recordMonitor(env, scans, nowMs) {
   const db = env.DB;
   if (!db) return;
   await ensureSchema(db);
   const writes = [];
+  let lastGood;
 
   for (const [clubId, { slots, monDates }] of Object.entries(scans)) {
     const windowMs = CLUBS[clubId].window * 86400000;
@@ -1030,12 +1121,18 @@ async function recordMonitor(env, scans, nowMs) {
     ]);
     const open = new Map(openRes.results.map(r => [r.slot, r]));
     const scanned = new Set(scannedRes.results.map(r => r.day));
+    if (lastGood === undefined) {
+      const row = await db.prepare("SELECT MAX(at_ms) AS t FROM runs WHERE ok = 1").first();
+      lastGood = (row && row.t) || nowMs;
+    }
+    const afterGap = nowMs - lastGood > MONITOR_GAP_MS;
 
     for (const [slot, r] of open) {
       if (current.has(slot)) continue;
       let outcome = "taken", closed = nowMs;
       if (r.start_ms <= nowMs) { outcome = "unbooked"; closed = r.start_ms; }
       else if (!monDates.includes(slot.slice(0, 10))) outcome = "unwatched";
+      else if (afterGap) { outcome = "unwatched"; closed = lastGood; }   // taken some time during the gap
       writes.push(db.prepare("UPDATE episodes SET closed_ms = ?, outcome = ? WHERE id = ?")
         .bind(closed, outcome, r.id));
     }

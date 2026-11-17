@@ -7,6 +7,7 @@ A Cloudflare Worker that watches Playtomic for free padel slots at **Padel Embas
 - **Checks every minute** from 07:00 to 22:59 Zagreb winter time (Cron Trigger) for slots in each person's days, start-time window and length.
 - **Alerts on cancellations**, with a hint of how fast that kind of slot usually goes (🔥 / ⏳ / 🧊, learned from history).
 - **New releases** (when the booking window reaches a slot): alerts Mon–Thu; on Fridays only the 18:00 start.
+- **Backs off** when Playtomic refuses requests (403/429): no retries, a single test request after pauses of 1, 5, then every 15 minutes, back to normal on the first success. One Telegram message when a block has lasted 10 minutes, one when it ends. `/status` and `/metrics` show the state.
 - **Skips** slots for today, and won't repeat an alert for the same slot within 3 hours (checkout flicker).
 - **Several people** can use one bot: anyone sends `/start`, the owner approves them, and each gets their own settings and alerts.
 - **History and stats** in D1: `/report` (charts), `/stats`, `/metrics`, plus a weekly report on Monday 08:00.
@@ -43,7 +44,7 @@ Debug links: `?setup=1` · `?webhook=1` · `?stats=1&days=7` · `?test=1` · `?d
 
 ## Tests
 
-`npm test` runs scenario scripts (Node 22.5+, no dependencies). They mock Playtomic, Telegram, KV and D1 (SQLite in memory) and print the messages the bot would send: multi-user access, per-day windows, checkout flicker, and release rules.
+`npm test` runs scenario scripts (Node 22.5+, no dependencies). They mock Playtomic, Telegram, KV and D1 (SQLite in memory) and print the messages the bot would send: multi-user access, per-day windows, checkout flicker, release rules, and backing off during a block.
 
 ## Limits to keep in mind (free plan)
 
