@@ -1,0 +1,10 @@
+{
+  "name": "padel-watcher",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that watches Playtomic for free padel slots and alerts on Telegram",
+  "scripts": {
+    "test": "node test/multi-user.mjs && node test/windows.mjs && node test/flicker.mjs && node test/releases.mjs"
+  },
+  "engines": { "node": ">=22.5" }
+}

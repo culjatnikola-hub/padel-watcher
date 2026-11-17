@@ -1,0 +1,40 @@
+import w from "../src/worker.js"; import { makeD1 } from "./d1mock.mjs";
+const RD = Date; let now = RD.parse("2026-11-09T10:15:00Z");   // Mon 11:15 local
+globalThis.Date = class extends RD { constructor(...a){ super(...(a.length?a:[now])); } static now(){ return now; } };
+const sent = []; const P6 = "15bff5cd-9af4-47a2-8bc4-9670a1ba4d7b";
+let free = { "2026-11-10": ["19:30:00", "16:00:00"], "2026-11-12": ["08:00:00"] };   // Tue 20:30 + 17:00, Thu 09:00 local
+globalThis.fetch = async (url, opt = {}) => { if (url.includes("api.telegram.org")) { const b = JSON.parse(opt.body);
+    if (url.endsWith("sendMessage")) sent.push(`[to ${b.chat_id}] ${b.text}`);
+    if (url.endsWith("setMyCommands")) sent.push(`[menu ${b.scope ? "owner" : "default"}] ${b.commands.map(c => c.command).join(",")}`);
+    if (b.chat_id === "999" && url.endsWith("sendMessage")) return new Response('{"ok":false,"description":"Forbidden: bot was blocked by the user"}');
+    return new Response('{"ok":true,"result":true}'); }
+  const d = url.match(/date=([\d-]+)/)?.[1]; if (!url.includes("57b9c4ce")) return new Response("[]");
+  return new Response(JSON.stringify((free[d] || []).map(t => ({ resource_id: P6, start_date: d, slots: [{ start_time: t, duration: 90, price: "44 EUR" }] })))); };
+const store = { settings: JSON.stringify({ remind: false, earliest: "17:30", latest: "19:00" }), report_sent: "2026-11-09" };
+const env = { TELEGRAM_TOKEN: "tok", TELEGRAM_CHAT_ID: "111", DB: makeD1(), SEEN: { get: async k => store[k] ?? null, put: async (k, v) => { store[k] = v; }, delete: async k => { delete store[k]; } } };
+const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("padel-watcher:tok")); const secret = [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 48);
+const msg = async (chat, text, from = {}) => { const pend = []; await w.fetch(new Request("https://x.dev/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": secret }, body: JSON.stringify({ message: { text, chat: { id: Number(chat), type: "private" }, from } }) }), env, { waitUntil: x => pend.push(x) }); await Promise.all(pend); return sent.splice(0).join("\n   ...\n"); };
+const run = async () => { let p; await w.scheduled({}, env, { waitUntil: x => p = x }); await p; return sent.splice(0).join("\n   ...\n") || "(nothing)"; };
+const show = (t, x) => console.log(`\n### ${t}\n${x}`);
+show("stranger says hi", await msg("222", "hello", { first_name: "Marko" }));
+show("stranger /start", await msg("222", "/start", { first_name: "Marko", username: "marko_p" }));
+show("stranger again", await msg("222", "/slots"));
+show("owner /users", await msg("111", "/users"));
+show("owner /approve", await msg("111", "/approve 222"));
+show("guest /window 08:00 10:00", await msg("222", "/window 08:00 10:00"));
+show("guest /bookings (blocked)", await msg("222", "/bookings"));
+show("guest /users (blocked)", await msg("222", "/users"));
+show("RUN: owner gets Tue 17:00+20:30, guest gets Thu 09:00", await run());
+show("RUN again: nothing new", await run());
+show("guest /pause", await msg("222", "/pause"));
+free["2026-11-13"] = ["08:30:00"];
+show("RUN: new Fri 09:30, guest paused -> nobody", await run());
+show("owner /status", await msg("111", "/status"));
+show("group message ignored", await (async () => { const pend = []; await w.fetch(new Request("https://x.dev/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": secret }, body: JSON.stringify({ message: { text: "/slots", chat: { id: -5, type: "group" } } }) }), env, { waitUntil: x => pend.push(x) }); await Promise.all(pend); return sent.splice(0).join("") || "(ignored)"; })());
+store.users = JSON.stringify({ ...JSON.parse(store.users), "999": { name: "Blocker", status: "approved" } });
+free["2026-11-10"].push("17:00:00");
+show("RUN with a user who blocked the bot: others still alerted", await run());
+show("owner /remove 222", await msg("111", "/remove 222"));
+show("removed guest writes", await msg("222", "/slots"));
+show("setup menus", await (async () => { await w.fetch(new Request("https://x.dev/?setup=1"), env, {}); return sent.splice(0).join("\n"); })());
+console.log("\nKV keys:", Object.keys(store).join(", "));
